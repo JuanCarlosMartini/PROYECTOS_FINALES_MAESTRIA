@@ -1,0 +1,572 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+## Link del dataset https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-player-dataset
+
+  
+##Data Discovery
+
+Primero vamos a cargar los datos en un dataframe para explorarlos.
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(tibble)
+tabs <- c("FIFA 15", "FIFA 16", "FIFA 17", "FIFA 18", "FIFA 19", "FIFA 20", 
+           "FIFA 21", "FIFA 22")
+
+dfs <- lapply(tabs, function(x){
+  read_excel("FIFA22_Player_Dataset/Career Mode player datasets - FIFA 15-22.xlsx", sheet = x)
+})
+
+```
+
+
+Veamos cómo se ven a simple vista al imprimir los datos al imprimir la cabeza 
+primer dataframe
+
+```{r}
+head(dfs[1][[1]])
+```
+
+Separemos los datos de cada año y pongámoslos en un solo dataframe, 
+pero específicando el año en una columna aparte:
+
+```{r}
+
+year <- 2015
+for (df in dfs){
+  new <- df
+  new["year"] <- year
+  if(year == 2015){
+    data <- new 
+  }else {
+    data <- rbind(data, new)
+  }
+  year <- year + 1
+}
+
+print(data[1, ])
+
+```
+
+
+Veamos qué columnas tiene el dataset:
+
+```{r}
+columnas <- colnames(data)
+columnas
+```
+
+El número exacto de columnas:
+
+```{r}
+length(columnas)
+```
+Obtengamos algunos datos básicos del dataset para el año 2022 de algunas columnas:
+
+```{r}
+library(Hmisc)
+describe(
+  data %>%
+    filter(year == 2022) %>%
+    select(overall, age, potential, international_reputation, physic, power_stamina)
+)
+```
+
+
+También podemos obtener un histograma de cada uno de los atributos anteriores para conocer mejor la distribución:
+
+```{r}
+ggplot(data, aes(x = overall)) + 
+  geom_histogram()
+```
+```{r}
+ggplot(data, aes(x = potential)) + 
+  geom_histogram()
+```
+
+```{r}
+ggplot(data, aes(x = power_stamina)) + 
+  geom_histogram()
+```
+
+Se puede observar que muchas de las métricas para los jugadores tienen un aspecto de distribución normal
+
+
+
+También podemos observar algunas gráficas de puntos para comparar la relación entre distintas características en los jugadores:
+
+```{r}
+ggplot(data %>% filter(year == 2022), aes(x=power_stamina, y=overall)) + geom_point(alpha = 0.1, color = "blue")
+ggplot(data %>% filter(year == 2022), aes(x=dribbling, y=overall)) + geom_point(alpha = 0.1, color = "red")
+ggplot(data %>% filter(year == 2022), aes(x=pace, y=overall)) + geom_point(alpha = 0.1, color = "yellow")
+ggplot(data %>% filter(year == 2022), aes(x=movement_agility, y=overall)) + geom_point(alpha = 0.1, color = "orange")
+ggplot(data %>% filter(year == 2022), aes(x=power_shot_power, y=overall)) + geom_point(alpha = 0.1, color = "gray")
+ggplot(data %>% filter(year == 2022), aes(x=attacking_finishing, y=overall)) + geom_point(alpha = 0.1, color = "black")
+```
+
+
+Al observar estas gráficas podemos darnos cuenta que hay variables que tienen una relación más lineal con el overall. Es decir, impactan más directamente el puntaje de desempeño general que otras. Por ejemplo, se puede observar en las gráficas anteriores que el "dribbling" y el "power_shot_power" parecen tener una relación más directa con el desempeño general. Mientras que otras como el pace no parecen tener un patrón tan obvio a simple vista. Es posible que hayan variables más correlacionadas entre sí que otras. 
+
+También es interesante la relación entre "attacking_finishing" y overall. Se ve que en cierto intervalo, attacking_finishing no parece marcar una diferencia en el overall, pero a partir de cierto puntaje (50 aproximádamente), ya empieza a tener un comportamiento más lineal. 
+
+Esto es importante porque puede ayudarnos a decidir algunas preguntas que queramos contestar más adelante. 
+
+### ¿Cuál es la correlación entre los distintos atributos y el overall y wage(sueldo)?
+
+También podemos obtener la correlación entre las distintas propiedades:
+
+```{r}
+d2 <- data %>% 
+  select_if(is.numeric) %>%
+  as.matrix %>%
+  cor(use="pairwise.complete.obs") %>%
+  as.data.frame %>%
+  rownames_to_column(var = 'var1') %>%
+  gather(var2, value, -var1)
+
+head(d2)
+
+
+res_correlation_with_overall <- filter(d2, abs(value) >.5)
+res_correlation_with_overall <- res_correlation_with_overall %>%
+  filter( var1 == 'overall'  ) %>%
+  arrange(desc(value))
+res_correlation_with_overall
+```
+
+Aquí podemos ver cuáles son las propiedades que tienen una correlación más fuerte con el overall. 
+
+Por ejemplo, movement_reactions, potential, mentality_composure y passing son los atributos que tienen mayor correlación con el overall. 
+
+También es interesante notar que hay una buena correlación entre el overall y el sueldo de los jugadores. (Su overall es un fuerte predictor de su sueldo)
+
+También podemos ver cuáles son las propiedades que se correlacionan más con el pago de los jugadores:
+
+```{r}
+d2 %>%
+  filter( var1 == 'wage_eur'  ) %>%
+  arrange(desc(value))
+```
+
+
+Aquí podemos ver que aparte de otros atributos relacionados al aspecto monetario, los atributos que tienen que ver con su pago, son: "international_reputation", "overall", "movement_reactions" y "potential". Eso tiene mucho sentido, tomando en cuenta que estos atributos ayudan como parte del marketing del club y desempeño general del jugador. 
+
+## Data preparation
+
+Primero vamos a obtener solo las columnas que nos interesan y los países que están clasificados al mundial:
+
+```{r}
+
+
+paises_clasificados <-c("Ecuador","Senegal","Netherlands","England","Iran","United States","Wales","Ukraine","Scotland","Argentina","Saudi Arabia","Mexico","Poland","France","Australia","United Arab Emirates","Peru","Denmark","Tunisia","Spain","Costa Rica","New Zealand","Germany","Japan","Belgium","Canada","Morocco","Croatia","Brazil","Serbia","Switzerland","Cameroon","Portugal","Ghana","Uruguay")
+length(paises_clasificados)
+```
+
+```{r}
+data2 <- data %>% filter_all(any_vars(. %in% paises_clasificados))
+data2 <- data2 %>% filter(year==2022)
+```
+
+```{r}
+unique(data2$nationality_name)
+
+```
+
+## Model Planning
+
+Se responderán algunas preguntas utilizando gráficas y código R. Para ello se utilizará el dataset generado anteriormente. 
+Se planea utilizar las relaciones entre distintas variables encontradas en el data discovery. 
+
+## Model building
+
+### 1. Comparación histórica de los jugadores Cristiano Ronaldo y Leo Messi. ¿Quién es mejor, según la estadistica? 
+Primero se crea un dataframe con los datos de los dos jugadores y sus datos mas importantes
+```{r}
+lista_messi_cristiano <- c("Lionel Andrés Messi Cuccittini","Cristiano Ronaldo dos Santos Aveiro")
+datos_messi_cristiano <- data %>%
+  filter(long_name %in% lista_messi_cristiano ) %>%
+  select(long_name, overall,movement_reactions,potential,mentality_composure,passing,dribbling,shooting,wage_eur,year)
+datos_messi_cristiano
+```
+
+Viendo los datos a simple vista se puede ver que todo los datos estan bastante cercanos, no se puede sacar una conclusion.
+
+Se grafican los datos a traves de los años
+```{r}
+ggplot(datos_messi_cristiano , aes(x = year, y = overall, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = movement_reactions, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = potential, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = mentality_composure, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = passing, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = dribbling, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = shooting, color=long_name) ) +  
+  geom_line()
+ggplot(datos_messi_cristiano , aes(x = year, y = wage_eur, color=long_name) ) +  
+  geom_line()
+```
+Estudiando las graficas se pueden empezar a ver patrones mas facilmente, se puede ver que Messi tiene puntajes un poco mas altos en la mayoria de los KPIs mientras Cristiano tiene puntajes mayores en menos KPIs.
+```{r}
+group_by(datos_messi_cristiano, long_name)
+```
+
+Se sacan los promedios de cada atributo para poder visualizar de mejor manera los datos.
+```{r}
+
+apply(datos_messi_cristiano[,c(-1,-10)], 2, function(x) tapply(x, datos_messi_cristiano$long_name, FUN =mean,na.rm=T))
+```
+Viendo los promedios se puede observar que Cristiano solo supera a Messi de forma considerable en una sola categoria: shooting, en las demas Messi es superior o estan muy cercanos hasta en atributos en los que Cristiano parecia superior, como lo era el de movement_reactions.
+
+Con esto se podria concluir, que segun la estadistica el mejor jugador entre Cristiano Ronaldo y Leonel Messi es Leonel Messi.
+
+### 2. Presupuesto Ideal : Definir un presupuesto ideal para crear un equipo competitivo, considerando que desea ganar todos los juegos y torneos en que se participa.
+
+```{r}
+unique(data$nation_position)
+```
+Para crear nuestro equipo ideal necesitamos de 23 jugadores ordenados de la siguiente manera:
+
+3 Porteros
+4 Defensas centrales
+4 Defensas laterales
+4 Centrocampistas
+4 Volantes laterales
+4 Delanteros
+
+Para simplificar los calculos se crea una nueva columna de posiciones_simples en donde se combinan posisiciones parecidas, como lo son CAM, CDM, CM a centrocampista 
+```{r}
+datos_equipo_ideal <- data %>%
+  filter(year == 2022) %>%
+  mutate(posiciones_simplificadas = case_when(
+    club_position=="GK"~"Portero",
+    club_position=="CB"~"Defensa central",
+    club_position=="RB"|club_position=="RWB"|club_position=="RCB"~"Defensa derecho",
+    club_position=="LB"|club_position=="LWB"|club_position=="LCB"~"Defensa izquierdo",
+    club_position=="CM"|club_position=="CAM"|club_position=="CDM"|club_position=="LCM"|club_position=="RCM"~"Centrocampista central",
+    club_position=="RM"|club_position=="RW"|club_position=="RDM"|club_position=="RAM"~"Centrocampista derecho",
+    club_position=="LM"|club_position=="LW"|club_position=="LDM"|club_position=="LAM"~"Centrocampista izquierdo",
+    club_position=="CF"|club_position=="ST"|club_position=="RF"|club_position=="LF"|club_position=="RS"|club_position=="LS"~"Delantero",
+    
+    ))
+datos_equipo_ideal %>% select(short_name,overall,club_position,posiciones_simplificadas)
+
+```
+
+Teniendo el nuevo dataset, se puede agrupar por cada posicion y ver a los mejores 5 jugadores de cada posicion para crear nuestro equipo.
+
+```{r}
+for(i in unique(datos_equipo_ideal$posiciones_simplificadas)){
+  datos_equipo_ideal %>%
+  subset(posiciones_simplificadas==i) %>%
+  arrange(desc(overall)) %>%
+  select(short_name, overall, posiciones_simplificadas, year) %>%
+  head(5) %>%
+  print()
+}
+
+```
+Teniendo la informacion de los 5 mejores jugadores de cada posicion se crea nuestro equipo ideal:
+
+Porteros: J. Oblak, M. Neuer, M. ter Stegen
+Defensas Centrales: S. de Vrij, J. Giménez, S. Coates, N. Otamendi
+Defensas derechos: Marquinhos, T. Alexander-Arnold
+Defensas izquierdos: V. van Dijk, Sergio Ramos
+Centrocampistas: K. De Bruyne, N. Kanté, Casemiro, T. Kroos
+Centrocampistas derechos: L. Messi, M. Salah
+Centrocampista izquierdo: Neymar Jr, S. Mané
+Delanteros: R. Lewandowski, Cristiano Ronaldo, K. Mbappé, H. Kane
+
+Con nuestro eqiupo ideal escogido se puede calcular el presupuesto que necesitariamos para crear este equipo, por lo que necesitamos pagar la clausula de rescicion (release_clause_eur) para el cambio de equipo y el salario de un año (wage_eur) de cada jugador.
+
+```{r}
+equipo_ideal <- c("J. Oblak","M. Neuer","M. ter Stegen","S. de Vrij","J. Giménez","S. Coates","N. Otamendi","Marquinhos","T. Alexander-Arnold","V. van Dijk","Sergio Ramos", "K. De Bruyne","N. Kanté","Casemiro","T. Kroos","L. Messi","M. Salah","Neymar Jr","S. Mané","R. Lewandowski","Cristiano Ronaldo","K. Mbappé","H. Kane")
+
+datos_salarios <- datos_equipo_ideal[datos_equipo_ideal$short_name %in% equipo_ideal,] %>%
+  select(short_name,wage_eur,release_clause_eur)
+datos_salarios
+```
+
+Se ve que hay un valor extra en el dataframe, esto es porque el nombre H. Kane es compartido por dos jugadores, por lo que se tiene que borrar esa fila antes de calcular el presupuesto final sumando los datos de todas las filas.
+
+```{r}
+datos_salarios <- head(datos_salarios, - 1)
+```
+
+Ya con el dataset final se calcula el presupuesto sumando todos los datos
+```{r}
+colSums(Filter(is.numeric, datos_salarios))
+presupuesto_EUR <- sum(datos_salarios$wage_eur) + sum(datos_salarios$release_clause_eur)
+presupuesto_QTZ <- presupuesto_EUR * 8.12
+presupuesto_QTZ
+```
+Para poder tener el equipo ideal se necesitaria un presupuesto de Q.30,473,499,280 con el mayor gasto siendo la paga de las clausulas de rescicion de cada jugador.
+
+### 3. Realizar un top-5 de cada liga en los atributos siguientes: agilidad, fuerza y control del balón. Comparar con la información historica desde el FIFA 22 hasta el FIFA 15. 
+
+Primero veamos cuántas y cuáles ligas se tienen en el dataset:
+
+```{r}
+data %>%
+  select(league_name, league_level) %>%
+  distinct()
+
+```
+
+para tener la cuenta exacta de cuántas ligas:
+
+```{r}
+data %>% 
+  select(league_name, league_level) %>%
+  n_distinct()
+
+```
+
+Son demasiadas ligas, veamos cuántas ligas de nivel 1 tenemos:
+```{r}
+data %>%
+  select(league_name, league_level) %>%
+  filter(league_level == 1) %>%
+  n_distinct()
+```
+
+Ahora veamos si podemos obtener el top 5 de cada liga por atributo:
+
+```{r}
+atributos_analizar <- c("movement_agility", "power_strength", "skill_ball_control")
+
+top5_agility <- data %>%
+  filter(year==2022) %>%
+  select(league_name,long_name, movement_agility) %>%
+  arrange(desc(movement_agility)) %>%
+  group_by(league_name) %>%
+  slice(1:5)
+  
+top5_agility
+```
+
+Utilizando este dataset podemos buscar por liga si estamos interesados en una en específica:
+
+```{r}
+
+top5_agility %>%
+  filter(league_name == "Spain Primera Division")
+
+```
+
+De igual manera lo podemos hacer con los dos atributos restantes:
+
+```{r}
+top5_strength <- data %>%
+  filter(year==2022) %>%
+  select(league_name,long_name, power_strength) %>%
+  arrange(desc(power_strength)) %>%
+  group_by(league_name) %>%
+  slice(1:5)
+top5_strength
+```
+
+```{r}
+top5_skill_ball_control <- data %>%
+  filter(year==2022) %>%
+  select(league_name,long_name, skill_ball_control) %>%
+  arrange(desc(skill_ball_control)) %>%
+  group_by(league_name) %>%
+  slice(1:5)
+top5_strength
+```
+
+
+Ahora veamos algunas gráficas que nos muestren los datos y así podamos analizarlos:
+
+```{r fig.align="center", echo = FALSE,fig.width = 10}
+ggplot(top5_agility, aes(x=league_name, y = movement_agility, color= movement_agility)) + 
+  geom_point() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r fig.align="center", echo = FALSE,fig.width = 10}
+ggplot(top5_strength, aes(x=league_name, y = power_strength, color= power_strength)) + 
+  geom_point() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+```{r fig.align="center", echo = FALSE,fig.width = 10}
+ggplot(top5_skill_ball_control, aes(x=league_name, y = skill_ball_control, color= skill_ball_control)) + 
+  geom_point() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+### 4. ¿Quién será el mejor jugador en 5 años?
+
+Primero obtengamos quiénes son los mejores 5 jugadores actualmente:
+```{r}
+best_players_2022 <- data %>%
+  filter(year == 2022) %>%
+  arrange(desc(overall)) %>%
+  select(long_name, overall) %>%
+  head(5)
+
+best_players_2022
+```
+
+Ahora veamos algunas estadísticas importantes por cada uno, en los años anteriores:
+
+```{r}
+
+
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = year, y = overall, color=long_name) ) +  
+  geom_line()
+
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = year, y = movement_reactions, color=long_name) ) +  
+  geom_line()
+
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = year, y = potential, color=long_name) ) +  
+  geom_line()
+	
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = year, y = mentality_composure, color=long_name) ) +  
+  geom_line()
+
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = year, y = passing, color=long_name) ) +  
+  geom_line()
+
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = year, y = dribbling, color=long_name) ) +  
+  geom_line()
+
+```
+
+Ahora veamos a qué edad tuvieron su overall máximo cada uno de estos jugadores:
+
+```{r}
+ggplot(data %>% filter_all(any_vars(. %in% best_players_2022$long_name)) , aes(x = age, y = overall, color=long_name) ) +  
+  geom_line() + ggtitle("Overall vs Edad")
+```
+
+Podemos decir que entre los 26 y 31 los jugadores tienen su pico más alto. Por lo tanto, nos interesa analizar jugadores de entre 21 y 26 años. 
+
+Veamos quiénes son los que tienen esa edad con el overall más alto actualmente:
+
+```{r}
+prospectos <- data %>%
+  filter(year == 2022) %>%
+  filter(age>=21 & age <= 26 ) %>%
+  arrange(desc(overall)) %>%
+  select(long_name, age, overall, mentality_composure) %>%
+  head(5)
+prospectos
+```
+
+
+```{r}
+ggplot(data %>% filter_all(any_vars(. %in% prospectos$long_name)) , aes(x = year, y = mentality_composure, color=long_name) ) +  
+  geom_line()
+ggplot(data %>% filter_all(any_vars(. %in% prospectos$long_name)) , aes(x = year, y = overall, color=long_name) ) +  
+  geom_line()
+ggplot(data %>% filter_all(any_vars(. %in% prospectos$long_name)) , aes(x = year, y = potential, color=long_name) ) +  
+  geom_line()
+
+```
+
+### Conclusiones
+
+De acuerdo a las KPIs(métricas), el jugador que más probablemente sea el mejor del mundo en 5 años es Kylian Mbappé Lottin. Tal como se puede observar en las gráficas, está en la edad ideal, y también sus métricas más importantes se están manteniendo (potential) o aumentando (mentality_composure, overall) a lo largo de los años anteriores. 
+
+
+### 5. ¿Quién ganará el mundial?
+
+En el data preparation obtuvimos un dataset con los jugadores que particaparán en este mundial 2022.
+Para simplificar un poco el análisis (ya que no se cuenta con las posiciones que cada jugador desempeñaría en su selección nacional, solo se cuenta con datos completos para las posiciones jugadas para los clubs), se tomará los 23 mejores jugadores por país (tomando en cuenta su overall), si suponemos que estos jugadores podrías sustituir o compensar a los jugadores en otras posiciones pero que no son tan buenos. 
+
+```{r}
+best_player_nationality <- data2 %>% 
+  select(nationality_name, long_name, overall, movement_reactions, potential, mentality_composure, passing) %>% 
+  arrange(desc(overall)) %>%
+  group_by(nationality_name) %>%
+  slice(1:23)
+  
+
+best_player_nationality
+
+```
+
+
+Ahora obtengamos el promedio de overall de cada selección del país:
+
+```{r}
+
+
+nationality_averages <- as.data.frame(apply(best_player_nationality[,c("overall","movement_reactions","potential","mentality_composure","passing")], 2, function(x) tapply(x, best_player_nationality$nationality_name, FUN =mean,na.rm=T)))
+
+
+nationality_averages$nationality_name <- sort(paises_clasificados, decreasing = FALSE)
+
+nationality_averages
+
+```
+
+Ahora grafiquemos los resultados:
+
+```{r}
+
+ggplot(nationality_averages, aes(x = reorder(nationality_name, -overall), y = overall)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(nationality_averages, aes(x = reorder(nationality_name, -movement_reactions), y = movement_reactions)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(nationality_averages, aes(x = reorder(nationality_name, -potential), y = potential)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(nationality_averages, aes(x = reorder(nationality_name, -mentality_composure), y = mentality_composure)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(nationality_averages, aes(x = reorder(nationality_name, -passing), y = passing)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+
+```
+
+También se puede analizar haciendo una suma ponderada de cada uno de los atributos anteriores:
+
+```{r}
+
+
+
+total <- nationality_averages %>%
+  mutate(total = overall * 0.5 + movement_reactions * 0.1 + potential*0.1 + mentality_composure * 0.2 + passing * 0.1 ) %>%
+  arrange(desc(total))
+
+total
+```
+
+
+```{r}
+
+ggplot(total, aes(x = reorder(nationality_name, -total), y = total)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+Conclusión:
+
+España ganará el mundial, ya que cuenta con los mejores jugadores en promedio, y después de hacer la suma ponderada de ciertos atributos que pensamos son escenciales para ganar el mundial, es quién obtiene el puntaje más alto.
+
+

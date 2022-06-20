@@ -1,0 +1,64 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Juan Carlos Martini
+
+1.Conociendo los datos
+```{r}
+library(tidyverse)
+yearly = read.csv("E:/Users/Martini2/Desktop/USAC/Maestria/2do trimestre/FUNDAMENTOS DE PROGRAMACIÓN Y SCRIPTING/R Notebooks/Proyecto/Proyecto_r/deaths_handwashing.csv", header = TRUE, sep = ",", dec = ".")
+yearly
+```
+
+2.El alarmante número de muertes
+```{r}
+yearly <- yearly%>%
+  mutate(proportion_deaths = deaths/births)
+yearly
+```
+
+3.Muerte en las clínicas
+```{r}
+clinics <- yearly%>%
+  filter(clinic %in% c("clinic 1","clinic 2"))
+clinics %>%
+  ggplot( aes(x=year, y=proportion_deaths, group=clinic, color=clinic)) +
+    geom_line() 
+```
+
+4.Comienza el lavado de manos
+```{r}
+monthly = read.csv("E:/Users/Martini2/Desktop/USAC/Maestria/2do trimestre/FUNDAMENTOS DE PROGRAMACIÓN Y SCRIPTING/R Notebooks/Proyecto/Proyecto_r/deaths_clinic_1.csv", header = TRUE, sep = ",", dec = ".")
+monthly <- monthly%>%
+  mutate(proportion_deaths = deaths/births)
+head(monthly)
+```
+
+5.El efecto del lavado de manos
+```{r}
+hand_wash <- monthly %>%
+  mutate(year = format(as.Date(date), "%Y")) %>%
+  group_by(year)%>%
+  summarise_at(vars(proportion_deaths), funs(mean(., na.rm=TRUE)))
+ggplot(hand_wash,aes(x=year, y=proportion_deaths, group=1)) +
+    geom_line() + xlab("Años")+ylab("Proporcion de muertes")+geom_point()
+```
+
+6.Los resultados del lavado de manos
+```{r}
+hand_wash_color <- monthly%>%
+  mutate(handwashing_started=case_when(format(as.Date(date), "%Y")<"1847" ~ FALSE,format(as.Date(date), "%Y")>="1847" ~ TRUE))%>%
+  mutate(year = format(as.Date(date), "%Y")) %>%
+  group_by(year,handwashing_started)%>%
+  summarise_at(vars(proportion_deaths), funs(mean(., na.rm=TRUE)))
+ggplot(hand_wash_color,aes(x=year, y=proportion_deaths, group=1)) +
+    geom_line(aes(color= handwashing_started)) + xlab("Años")+ylab("Proporcion de muertes")+geom_point()
+```
+
+```{r}
+hand_wash_color %>%
+  group_by(handwashing_started)%>%
+  summarise_at(vars(proportion_deaths), funs(mean(., na.rm=TRUE)))
+```
+
